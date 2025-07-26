@@ -23,7 +23,7 @@ Stack completo de monitoreo para Docker con Grafana, Prometheus, Node Exporter, 
 
 1. **Clonar el repositorio:**
 ```bash
-git clone https://github.com/gabriel3312cl/monitoring-stack.git
+git clone https://github.com/tu-usuario/monitoring-stack.git
 cd monitoring-stack
 ```
 
@@ -36,17 +36,12 @@ cp .env.example .env
 nano .env
 ```
 
-3. **Crear estructura de directorios:**
-```bash
-mkdir -p grafana/provisioning/datasources
-```
-
-4. **Levantar el stack:**
+3. **Levantar el stack:**
 ```bash
 docker-compose up -d
 ```
 
-5. **Verificar que todos los servicios estén corriendo:**
+4. **Verificar que todos los servicios estén corriendo:**
 ```bash
 docker-compose ps
 ```
@@ -83,7 +78,7 @@ Después de acceder a Grafana, importa estos dashboards:
 monitoring-stack/
 ├── docker-compose.yml          # Configuración principal de servicios
 ├── prometheus.yml              # Configuración de Prometheus
-├── promtail-config.yml         # Configuración de Promtail
+├── promtail-config.yml        # Configuración de Promtail
 ├── grafana/
 │   └── provisioning/
 │       └── datasources/
@@ -301,6 +296,12 @@ Para ambientes de producción:
 ## 📄 Licencia
 
 Este proyecto está bajo la licencia MIT. Ver el archivo `LICENSE` para más detalles.
+
+## 🆘 Soporte
+
+- 📧 Email: soporte@tuempresa.com
+- 💬 Slack: #monitoring-help
+- 📚 Wiki: https://wiki.tuempresa.com/monitoring
 
 ---
 

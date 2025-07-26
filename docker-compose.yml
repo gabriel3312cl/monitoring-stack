@@ -49,7 +49,6 @@ services:
     restart: unless-stopped
     volumes:
       - prometheus-data:/prometheus
-      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -65,6 +64,9 @@ services:
     depends_on:
       - node-exporter
       - cadvisor
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
 
   # Grafana - Visualización
   grafana:
@@ -73,7 +75,6 @@ services:
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./configs/grafana/provisioning:/etc/grafana/provisioning
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
@@ -86,6 +87,9 @@ services:
       - monitoring
     depends_on:
       - prometheus
+    configs:
+      - source: grafana_datasources
+        target: /etc/grafana/provisioning/datasources/prometheus.yml
 
   # Loki - Logs de containers
   loki:
@@ -106,12 +110,96 @@ services:
     volumes:
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - ./configs/promtail/promtail-config.yml:/etc/promtail/config.yml
     command: -config.file=/etc/promtail/config.yml
     networks:
       - monitoring
     depends_on:
       - loki
+    configs:
+      - source: promtail_config
+        target: /etc/promtail/config.yml
+
+configs:
+  prometheus_config:
+    content: |
+      global:
+        scrape_interval: 15s
+        evaluation_interval: 15s
+
+      scrape_configs:
+        - job_name: 'prometheus'
+          static_configs:
+            - targets: ['localhost:9090']
+
+        - job_name: 'node-exporter'
+          static_configs:
+            - targets: ['node-exporter:9100']
+
+        - job_name: 'cadvisor'
+          static_configs:
+            - targets: ['cadvisor:8080']
+
+  grafana_datasources:
+    content: |
+      apiVersion: 1
+
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+          editable: true
+      
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki:3100
+          editable: true
+
+  promtail_config:
+    content: |
+      server:
+        http_listen_port: 9080
+        grpc_listen_port: 0
+
+      positions:
+        filename: /tmp/positions.yaml
+
+      clients:
+        - url: http://loki:3100/loki/api/v1/push
+
+      scrape_configs:
+        - job_name: containers
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: containerlogs
+                __path__: /var/lib/docker/containers/*/*log
+      
+          pipeline_stages:
+            - json:
+                expressions:
+                  output: log
+                  stream: stream
+                  attrs:
+            - json:
+                expressions:
+                  tag:
+                source: attrs
+            - regex:
+                expression: (?P<container_name>(?:[^|]*))\|(?P<image_name>(?:[^|]*))
+                source: tag
+            - timestamp:
+                format: RFC3339Nano
+                source: time
+            - labels:
+                stream:
+                container_name:
+                image_name:
+            - output:
+                source: output
 
 volumes:
   prometheus-data:
