@@ -1,0 +1,135 @@
+# Variables de entorno
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Datos de volúmenes Docker (si los montas localmente)
+/data/
+/prometheus-data/
+/grafana-data/
+/loki-data/
+/promtail-data/
+
+# Archivos de configuración con secretos
+*-secrets.yml
+*-secrets.yaml
+secrets/
+credentials/
+
+# Backups
+*.tar.gz
+*.zip
+backups/
+backup/
+*.bak
+*.backup
+
+# Logs
+*.log
+logs/
+/var/log/
+
+# Archivos temporales
+*.tmp
+*.temp
+.tmp/
+tmp/
+
+# Certificados SSL (si usas HTTPS)
+*.pem
+*.key
+*.crt
+*.cert
+*.pfx
+ssl/
+certs/
+certificates/
+
+# IDE y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Sistema operativo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Docker
+docker-compose.override.yml
+.dockerignore.local
+
+# Archivos de configuración local
+prometheus-local.yml
+grafana-local.ini
+promtail-local.yml
+
+# Directorios de desarrollo
+.vagrant/
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Node (si usas scripts adicionales)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (si usas scripts de automatización)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Archivos de métricas exportadas
+metrics/
+exports/
+*.csv
+*.xlsx
+
+# Documentación generada
+docs/_build/
+site/
+
+# Archivos de configuración de CI/CD con secretos
+.gitlab-ci-local.yml
+.github/workflows/*-local.yml
+
+# Archivos de prueba
+test-data/
+*.test
+coverage/
+
+# Archivos grandes que no deben estar en el repo
+*.tar
+*.iso
+*.dmg
+*.img
+
+# Configuraciones específicas del usuario
+custom-dashboards/
+my-*.yml
+personal/
+
+# Lock files (depende de tu preferencia)
+# Comenta estas líneas si quieres versionarlos
+# package-lock.json
+# yarn.lock
+# Pipfile.lock
