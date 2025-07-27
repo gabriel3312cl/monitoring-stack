@@ -64,6 +64,7 @@ Después de acceder a Grafana, importa estos dashboards:
 3. **cAdvisor Container Metrics**: ID `14282`
 4. **Docker Prometheus Monitoring**: ID `193`
 5. **Loki Docker Logs**: ID `13639`
+6. **Node Exporter Full**: ID `1860`
 
 ### ¿Cómo importar dashboards?
 
