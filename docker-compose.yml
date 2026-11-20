@@ -1,212 +1,985 @@
+name: opendev-monitoring
 services:
-  # Node Exporter - Métricas del sistema host
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: node-exporter
+  prometheus:
     restart: unless-stopped
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
+    logging: &id001
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    image: prom/prometheus:v3.16.0
+    mem_limit: 256m
     command:
-      - '--path.procfs=/host/proc'
-      - '--path.rootfs=/rootfs'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    ports:
-      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    - --config.file=/etc/prometheus/prometheus.yml
+    - --storage.tsdb.path=/prometheus
+    - --storage.tsdb.retention.time=7d
+    - --storage.tsdb.retention.size=1GB
+    - --web.enable-remote-write-receiver
+    volumes:
+    - prometheus-data:/prometheus
+    configs:
+    - source: prometheus_config
+      target: /etc/prometheus/prometheus.yml
     networks:
-      - monitoring
-
-  # cAdvisor - Métricas de containers Docker
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
-    container_name: cadvisor
+      monitoring:
+        ipv4_address: 10.91.0.2
+  loki:
     restart: unless-stopped
+    logging: *id001
+    image: grafana/loki:3.7.10
+    mem_limit: 256m
+    command:
+    - -config.file=/etc/loki/config.yaml
+    volumes:
+    - loki-data:/loki
+    configs:
+    - source: loki_config
+      target: /etc/loki/config.yaml
+    networks:
+      monitoring:
+        ipv4_address: 10.91.0.3
+  cadvisor:
+    restart: unless-stopped
+    logging: *id001
+    image: ghcr.io/google/cadvisor:v0.61.1
+    mem_limit: 128m
     privileged: true
     devices:
-      - /dev/kmsg:/dev/kmsg
+    - /dev/kmsg:/dev/kmsg
     volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
-      - /cgroup:/cgroup:ro
-      - /dev/disk/:/dev/disk:ro
-    ports:
-      - "${CADVISOR_PORT:-8080}:8080"
-    networks:
-      - monitoring
+    - /:/rootfs:ro
+    - /var/run:/var/run:ro
+    - /sys:/sys:ro
+    - /var/lib/docker:/var/lib/docker:ro
     command:
-      - '-housekeeping_interval=10s'
-      - '-docker_only=true'
-      - '-store_container_labels=false'
-
-  # Prometheus - Sistema de monitoreo
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
+    - --housekeeping_interval=30s
+    - --docker_only=true
+    - --store_container_labels=false
+    - --whitelisted_container_labels=com.docker.compose.service,coolify.name
+    - --enable_metrics=cpu,memory,network,diskIO
+    - --storage_duration=1m
+    networks:
+      monitoring: {}
+  alloy:
     restart: unless-stopped
-    volumes:
-      - prometheus-data:/prometheus
+    logging: *id001
+    image: grafana/alloy:v1.22.0
+    mem_limit: 192m
+    user: 0:0
+    network_mode: host
+    pid: host
+    security_opt:
+    - no-new-privileges:true
+    cap_drop:
+    - ALL
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}'
-      - '--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-10GB}'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
-    networks:
-      - monitoring
-    depends_on:
-      - node-exporter
-      - cadvisor
+    - run
+    - --server.http.listen-addr=127.0.0.1:12345
+    - --storage.path=/var/lib/alloy/data
+    - /etc/alloy/config.alloy
+    volumes:
+    - alloy-data:/var/lib/alloy/data
+    - /proc:/host/proc:ro
+    - /sys:/host/sys:ro
+    - /:/host/root:ro,rslave
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /var/log:/var/log:ro
+    - /run/log/journal:/run/log/journal:ro
+    - /etc/machine-id:/etc/machine-id:ro
     configs:
-      - source: prometheus_config
-        target: /etc/prometheus/prometheus.yml
-
-  # Grafana - Visualización
+    - source: alloy_config
+      target: /etc/alloy/config.alloy
+    depends_on:
+    - prometheus
+    - loki
   grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
     restart: unless-stopped
+    logging: *id001
+    image: grafana/grafana:13.3.1
+    mem_limit: 384m
     volumes:
-      - grafana-data:/var/lib/grafana
+    - grafana-data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=${GRAFANA_ALLOW_SIGN_UP:-false}
-      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
-      - GF_INSTALL_PLUGINS=${GRAFANA_PLUGINS:-}
-    ports:
-      - "${GRAFANA_PORT:-3000}:3000"
-    networks:
-      - monitoring
-    depends_on:
-      - prometheus
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: https://ga.opendev.cl
+      GF_SECURITY_COOKIE_SECURE: 'true'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/vps.json
+    secrets:
+    - grafana_admin_password
     configs:
-      - source: grafana_datasources
-        target: /etc/grafana/provisioning/datasources/prometheus.yml
-
-  # Loki - Logs de containers
-  loki:
-    image: grafana/loki:latest
-    container_name: loki
-    restart: unless-stopped
-    ports:
-      - "${LOKI_PORT:-3100}:3100"
-    command: -config.file=/etc/loki/local-config.yaml
+    - source: grafana_datasources
+      target: /etc/grafana/provisioning/datasources/main.yaml
+    - source: grafana_dashboards
+      target: /etc/grafana/provisioning/dashboards/main.yaml
+    - source: vps_dashboard
+      target: /var/lib/grafana/dashboards/vps.json
     networks:
-      - monitoring
-
-  # Promtail - Recolector de logs para Loki
-  promtail:
-    image: grafana/promtail:latest
-    container_name: promtail
-    restart: unless-stopped
-    volumes:
-      - /var/log:/var/log:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    command: -config.file=/etc/promtail/config.yml
-    networks:
-      - monitoring
+      monitoring: {}
+      coolify: {}
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: coolify
+      traefik.http.routers.grafana-ga-http.rule: Host(`ga.opendev.cl`)
+      traefik.http.routers.grafana-ga-http.entrypoints: http
+      traefik.http.routers.grafana-ga-http.middlewares: grafana-ga-https
+      traefik.http.middlewares.grafana-ga-https.redirectscheme.scheme: https
+      traefik.http.routers.grafana-ga.rule: Host(`ga.opendev.cl`)
+      traefik.http.routers.grafana-ga.entrypoints: https
+      traefik.http.routers.grafana-ga.tls: 'true'
+      traefik.http.routers.grafana-ga.tls.certresolver: letsencrypt
+      traefik.http.routers.grafana-ga.service: grafana-ga
+      traefik.http.services.grafana-ga.loadbalancer.server.port: '3000'
     depends_on:
-      - loki
-    configs:
-      - source: promtail_config
-        target: /etc/promtail/config.yml
-
+    - prometheus
+    - loki
 configs:
   prometheus_config:
     content: |
       global:
-        scrape_interval: 15s
-        evaluation_interval: 15s
-
+        scrape_interval: 30s
+        evaluation_interval: 30s
       scrape_configs:
-        - job_name: 'prometheus'
-          static_configs:
-            - targets: ['localhost:9090']
+      - job_name: prometheus
+        static_configs:
+        - targets:
+          - localhost:9090
+      - job_name: cadvisor
+        static_configs:
+        - targets:
+          - cadvisor:8080
+      - job_name: loki
+        static_configs:
+        - targets:
+          - loki:3100
+  loki_config:
+    content: |
+      auth_enabled: false
+      server:
+        http_listen_port: 3100
+        log_level: warn
+      common:
+        path_prefix: /loki
+        replication_factor: 1
+        ring:
+          instance_addr: 127.0.0.1
+          kvstore:
+            store: inmemory
+      schema_config:
+        configs:
+        - from: '2024-01-01'
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+      storage_config:
+        filesystem:
+          directory: /loki/chunks
+        tsdb_shipper:
+          active_index_directory: /loki/index
+          cache_location: /loki/index-cache
+      compactor:
+        working_directory: /loki/compactor
+        retention_enabled: true
+        delete_request_store: filesystem
+        retention_delete_delay: 2h
+      limits_config:
+        retention_period: 72h
+        ingestion_rate_mb: 4
+        ingestion_burst_size_mb: 8
+        max_query_parallelism: 2
+        max_query_series: 500
+      query_range:
+        results_cache:
+          cache:
+            embedded_cache:
+              enabled: true
+              max_size_mb: 32
+      analytics:
+        reporting_enabled: false
+  alloy_config:
+    content: |
+      logging {
+        level = "warn"
+      }
 
-        - job_name: 'node-exporter'
-          static_configs:
-            - targets: ['node-exporter:9100']
+      prometheus.exporter.unix "host" {
+        procfs_path = "/host/proc"
+        sysfs_path = "/host/sys"
+        rootfs_path = "/host/root"
+        set_collectors = ["cpu", "diskstats", "filesystem", "loadavg", "meminfo", "netdev", "netstat", "stat", "time", "uname", "vmstat"]
+      }
+      prometheus.scrape "host" {
+        targets = prometheus.exporter.unix.host.targets
+        job_name = "node-exporter"
+        scrape_interval = "30s"
+        forward_to = [prometheus.remote_write.local.receiver]
+      }
+      prometheus.remote_write "local" {
+        endpoint {
+          url = "http://10.91.0.2:9090/api/v1/write"
+        }
+      }
 
-        - job_name: 'cadvisor'
-          static_configs:
-            - targets: ['cadvisor:8080']
+      loki.write "local" {
+        endpoint {
+          url = "http://10.91.0.3:3100/loki/api/v1/push"
+        }
+      }
 
+      discovery.docker "containers" {
+        host = "unix:///var/run/docker.sock"
+        refresh_interval = "30s"
+      }
+      discovery.relabel "containers" {
+        targets = discovery.docker.containers.targets
+        rule {
+          source_labels = ["__meta_docker_container_name"]
+          regex = "/(.*)"
+          target_label = "container"
+        }
+        rule {
+          source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+          target_label = "service"
+        }
+      }
+      loki.source.docker "containers" {
+        host = "unix:///var/run/docker.sock"
+        targets = discovery.relabel.containers.output
+        labels = {job = "docker", host = "vp.opendev.cl"}
+        forward_to = [loki.write.local.receiver]
+      }
+
+      loki.relabel "journal" {
+        forward_to = []
+        rule {
+          source_labels = ["__journal__systemd_unit"]
+          target_label = "unit"
+        }
+      }
+      loki.source.journal "ssh" {
+        matches = "_SYSTEMD_UNIT=ssh.service"
+        max_age = "24h"
+        labels = {job = "ssh", host = "vp.opendev.cl"}
+        relabel_rules = loki.relabel.journal.rules
+        forward_to = [loki.write.local.receiver]
+      }
+      loki.source.journal "firewall" {
+        matches = "_TRANSPORT=kernel"
+        max_age = "24h"
+        labels = {job = "firewall", host = "vp.opendev.cl"}
+        forward_to = [loki.process.firewall.receiver]
+      }
+      loki.process "firewall" {
+        stage.match {
+          selector = "{job=\"firewall\"} !~ \"(UFW|VPS-DOCKER-DROP)\""
+          action = "drop"
+        }
+        forward_to = [loki.write.local.receiver]
+      }
+      loki.source.file "fail2ban" {
+        targets = [{__path__ = "/var/log/fail2ban.log", job = "fail2ban", host = "vp.opendev.cl"}]
+        forward_to = [loki.write.local.receiver]
+      }
   grafana_datasources:
     content: |
       apiVersion: 1
-
       datasources:
-        - name: Prometheus
-          type: prometheus
-          access: proxy
-          url: http://prometheus:9090
-          isDefault: true
-          editable: true
-      
-        - name: Loki
-          type: loki
-          access: proxy
-          url: http://loki:3100
-          editable: true
-
-  promtail_config:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 30s
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+        editable: false
+  grafana_dashboards:
     content: |
-      server:
-        http_listen_port: 9080
-        grpc_listen_port: 0
-
-      positions:
-        filename: /tmp/positions.yaml
-
-      clients:
-        - url: http://loki:3100/loki/api/v1/push
-
-      scrape_configs:
-        - job_name: containers
-          static_configs:
-            - targets:
-                - localhost
-              labels:
-                job: containerlogs
-                __path__: /var/lib/docker/containers/*/*log
-      
-          pipeline_stages:
-            - json:
-                expressions:
-                  output: log
-                  stream: stream
-                  attrs:
-            - json:
-                expressions:
-                  tag:
-                source: attrs
-            - regex:
-                expression: (?P<container_name>(?:[^|]*))\|(?P<image_name>(?:[^|]*))
-                source: tag
-            - timestamp:
-                format: RFC3339Nano
-                source: time
-            - labels:
-                stream:
-                container_name:
-                image_name:
-            - output:
-                source: output
-
+      apiVersion: 1
+      providers:
+      - name: VPS
+        orgId: 1
+        folder: VPS
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards
+  vps_dashboard:
+    content: |
+      {
+        "uid": "vp-overview",
+        "title": "VPS: recursos, Docker y seguridad",
+        "description": "Tr\u00e1fico del host, consumo por contenedor y registros reales de SSH, Fail2ban y firewall. El firewall limita la frecuencia de sus logs; no es un registro de todos los paquetes.",
+        "schemaVersion": 39,
+        "version": 1,
+        "editable": false,
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "tags": [
+          "vps",
+          "docker",
+          "security"
+        ],
+        "panels": [
+          {
+            "id": 1,
+            "type": "stat",
+            "title": "CPU del VPS",
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 6,
+              "h": 5
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",job=\"node-exporter\"}[2m])))",
+                "legendFormat": ""
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 2,
+            "type": "stat",
+            "title": "RAM utilizada",
+            "gridPos": {
+              "x": 6,
+              "y": 0,
+              "w": 6,
+              "h": 5
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "100 * (1 - node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"})",
+                "legendFormat": ""
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 3,
+            "type": "stat",
+            "title": "Disco ra\u00edz utilizado",
+            "gridPos": {
+              "x": 12,
+              "y": 0,
+              "w": 6,
+              "h": 5
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "100 * (1 - node_filesystem_avail_bytes{job=\"node-exporter\",mountpoint=\"/\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{job=\"node-exporter\",mountpoint=\"/\",fstype!~\"tmpfs|overlay\"})",
+                "legendFormat": ""
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 4,
+            "type": "stat",
+            "title": "Contenedores con m\u00e9tricas",
+            "gridPos": {
+              "x": 18,
+              "y": 0,
+              "w": 6,
+              "h": 5
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "count(container_last_seen{job=\"cadvisor\",name!=\"\"})",
+                "legendFormat": ""
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 5,
+            "type": "timeseries",
+            "title": "Tr\u00e1fico real del VPS: entrada / salida",
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 12,
+              "h": 7
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "rate(node_network_receive_bytes_total{job=\"node-exporter\",device=\"eth0\"}[2m])",
+                "legendFormat": "Entrada"
+              },
+              {
+                "refId": "B",
+                "expr": "rate(node_network_transmit_bytes_total{job=\"node-exporter\",device=\"eth0\"}[2m])",
+                "legendFormat": "Salida"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 6,
+            "type": "timeseries",
+            "title": "CPU por contenedor (100% = un n\u00facleo)",
+            "gridPos": {
+              "x": 12,
+              "y": 5,
+              "w": 12,
+              "h": 7
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",name!=\"\"}[2m])) * 100",
+                "legendFormat": "{{name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 7,
+            "type": "timeseries",
+            "title": "RAM por contenedor",
+            "gridPos": {
+              "x": 0,
+              "y": 12,
+              "w": 12,
+              "h": 7
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",name!=\"\"})",
+                "legendFormat": "{{name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 8,
+            "type": "timeseries",
+            "title": "Red por contenedor",
+            "gridPos": {
+              "x": 12,
+              "y": 12,
+              "w": 12,
+              "h": 7
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",name!=\"\",name!~\".*alloy.*\"}[2m]))",
+                "legendFormat": "{{name}} entrada"
+              },
+              {
+                "refId": "B",
+                "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",name!=\"\",name!~\".*alloy.*\"}[2m]))",
+                "legendFormat": "{{name}} salida"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom"
+              }
+            }
+          },
+          {
+            "id": 9,
+            "type": "logs",
+            "title": "SSH: intentos fallidos / usuarios inv\u00e1lidos",
+            "gridPos": {
+              "x": 0,
+              "y": 19,
+              "w": 12,
+              "h": 8
+            },
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "{job=\"ssh\"} |~ \"(?i)(failed|invalid user|authentication failure|preauth)\"",
+                "queryType": "range"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": false,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "dedupStrategy": "none",
+              "enableLogDetails": true
+            }
+          },
+          {
+            "id": 10,
+            "type": "logs",
+            "title": "SSH: accesos aceptados",
+            "gridPos": {
+              "x": 12,
+              "y": 19,
+              "w": 12,
+              "h": 8
+            },
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "{job=\"ssh\"} |= \"Accepted\"",
+                "queryType": "range"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": false,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "dedupStrategy": "none",
+              "enableLogDetails": true
+            }
+          },
+          {
+            "id": 11,
+            "type": "logs",
+            "title": "Fail2ban: bloqueos y desbloqueos",
+            "gridPos": {
+              "x": 0,
+              "y": 27,
+              "w": 12,
+              "h": 8
+            },
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "{job=\"fail2ban\"} |~ \"(Ban|Unban)\"",
+                "queryType": "range"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": false,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "dedupStrategy": "none",
+              "enableLogDetails": true
+            }
+          },
+          {
+            "id": 12,
+            "type": "logs",
+            "title": "Firewall: UFW y puertos Docker bloqueados",
+            "gridPos": {
+              "x": 12,
+              "y": 27,
+              "w": 12,
+              "h": 8
+            },
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "{job=\"firewall\"}",
+                "queryType": "range"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": false,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "dedupStrategy": "none",
+              "enableLogDetails": true
+            }
+          },
+          {
+            "id": 13,
+            "type": "logs",
+            "title": "Logs de contenedores",
+            "gridPos": {
+              "x": 0,
+              "y": 35,
+              "w": 24,
+              "h": 9
+            },
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "{job=\"docker\"}",
+                "queryType": "range"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": false,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "dedupStrategy": "none",
+              "enableLogDetails": true
+            }
+          }
+        ]
+      }
+secrets:
+  grafana_admin_password:
+    environment: GRAFANA_PASSWORD
 volumes:
-  prometheus-data:
-    driver: local
-  grafana-data:
-    driver: local
-
+  grafana-data: {}
+  prometheus-data: {}
+  loki-data: {}
+  alloy-data: {}
 networks:
   monitoring:
-    driver: bridge
+    internal: true
+    ipam:
+      config:
+      - subnet: 10.91.0.0/24
+  coolify:
+    external: true
+    name: coolify
