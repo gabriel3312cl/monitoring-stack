@@ -73,6 +73,8 @@ services:
     - no-new-privileges:true
     cap_drop:
     - ALL
+    cap_add:
+    - DAC_OVERRIDE
     command:
     - run
     - --server.http.listen-addr=127.0.0.1:12345
@@ -287,6 +289,17 @@ configs:
       }
       loki.source.file "fail2ban" {
         targets = [{__path__ = "/var/log/fail2ban.log", job = "fail2ban", host = "vp.opendev.cl"}]
+        forward_to = [loki.process.fail2ban.receiver]
+      }
+      loki.process "fail2ban" {
+        stage.regex {
+          expression = "^(?P<timestamp>[0-9-]+ [0-9:]+,[0-9]+)"
+        }
+        stage.timestamp {
+          source = "timestamp"
+          format = "2006-01-02 15:04:05,000"
+          location = "America/Santiago"
+        }
         forward_to = [loki.write.local.receiver]
       }
   grafana_datasources:
