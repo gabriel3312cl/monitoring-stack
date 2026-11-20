@@ -219,8 +219,15 @@ configs:
         rootfs_path = "/host/root"
         set_collectors = ["cpu", "diskstats", "filesystem", "loadavg", "meminfo", "netdev", "netstat", "stat", "time", "uname", "vmstat"]
       }
-      prometheus.scrape "host" {
+      discovery.relabel "host" {
         targets = prometheus.exporter.unix.host.targets
+        rule {
+          target_label = "job"
+          replacement = "node-exporter"
+        }
+      }
+      prometheus.scrape "host" {
+        targets = discovery.relabel.host.output
         job_name = "node-exporter"
         scrape_interval = "30s"
         forward_to = [prometheus.remote_write.local.receiver]
