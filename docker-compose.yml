@@ -59,7 +59,8 @@ services:
     - --enable_metrics=cpu,memory,network,diskIO
     - --storage_duration=1m
     networks:
-      monitoring: {}
+      monitoring:
+        ipv4_address: 10.91.0.4
   alloy:
     restart: unless-stopped
     logging: *id001
@@ -119,7 +120,8 @@ services:
     - source: vps_dashboard
       target: /var/lib/grafana/dashboards/vps.json
     networks:
-      monitoring: {}
+      monitoring:
+        ipv4_address: 10.91.0.5
       coolify: {}
     labels:
     - traefik.enable=true
