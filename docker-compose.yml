@@ -122,18 +122,18 @@ services:
       monitoring: {}
       coolify: {}
     labels:
-      traefik.enable: 'true'
-      traefik.docker.network: coolify
-      traefik.http.routers.grafana-ga-http.rule: Host(`ga.opendev.cl`)
-      traefik.http.routers.grafana-ga-http.entrypoints: http
-      traefik.http.routers.grafana-ga-http.middlewares: grafana-ga-https
-      traefik.http.middlewares.grafana-ga-https.redirectscheme.scheme: https
-      traefik.http.routers.grafana-ga.rule: Host(`ga.opendev.cl`)
-      traefik.http.routers.grafana-ga.entrypoints: https
-      traefik.http.routers.grafana-ga.tls: 'true'
-      traefik.http.routers.grafana-ga.tls.certresolver: letsencrypt
-      traefik.http.routers.grafana-ga.service: grafana-ga
-      traefik.http.services.grafana-ga.loadbalancer.server.port: '3000'
+    - traefik.enable=true
+    - traefik.docker.network=coolify
+    - traefik.http.routers.grafana-ga-http.rule=Host(`ga.opendev.cl`)
+    - traefik.http.routers.grafana-ga-http.entrypoints=http
+    - traefik.http.routers.grafana-ga-http.middlewares=grafana-ga-https
+    - traefik.http.middlewares.grafana-ga-https.redirectscheme.scheme=https
+    - traefik.http.routers.grafana-ga.rule=Host(`ga.opendev.cl`)
+    - traefik.http.routers.grafana-ga.entrypoints=https
+    - traefik.http.routers.grafana-ga.tls=true
+    - traefik.http.routers.grafana-ga.tls.certresolver=letsencrypt
+    - traefik.http.routers.grafana-ga.service=grafana-ga
+    - traefik.http.services.grafana-ga.loadbalancer.server.port=3000
     depends_on:
     - prometheus
     - loki
